@@ -102,7 +102,7 @@
     </plugins>
   </build>
 
-<distributionManagement>
+  <distributionManagement>
     <repository>
       <id>datastax-repo</id>
       <name>DataStax temp repo</name>
