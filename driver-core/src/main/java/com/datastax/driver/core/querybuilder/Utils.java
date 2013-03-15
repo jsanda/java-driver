@@ -86,7 +86,7 @@ abstract class Utils {
     }
 
     private static boolean appendValueIfLiteral(Object value, StringBuilder sb) {
-        if (value instanceof Integer || value instanceof Long || value instanceof Float || value instanceof Double || value instanceof UUID) {
+        if (value instanceof Integer || value instanceof Long || value instanceof Float || value instanceof Double || value instanceof UUID || value instanceof Boolean) {
             sb.append(value);
             return true;
         } else if (value instanceof InetAddress) {
@@ -94,6 +94,9 @@ abstract class Utils {
             return true;
         } else if (value instanceof Date) {
             sb.append(((Date)value).getTime());
+            return true;
+        } else if (value == QueryBuilder.BIND_MARKER) {
+            sb.append("?");
             return true;
         } else {
             return false;

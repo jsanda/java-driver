@@ -496,11 +496,7 @@ public class Cluster {
         // new one join the cluster).
         // Note: we could move this down to the session level, but since prepared statement are global to a node,
         // this would yield a slightly less clear behavior.
-        // Furthermore, along with each prepared query we keep the current keyspace at the time of preparation
-        // as we need to make it is the same when we re-prepare on new/restarted nodes. Most query will use the
-        // same keyspace so keeping it each time is slightly wasteful, but this doesn't really matter and is
-        // simpler. Besides, we do avoid in prepareAllQueries to not set the current keyspace more than needed.
-        final Map<MD5Digest, PreparedQuery> preparedQueries = new ConcurrentHashMap<MD5Digest, PreparedQuery>();
+        final Map<MD5Digest, PreparedStatement> preparedQueries = new ConcurrentHashMap<MD5Digest, PreparedStatement>();
 
         private Manager(List<InetAddress> contactPoints, Configuration configuration) {
             this.configuration = configuration;
@@ -664,46 +660,68 @@ public class Cluster {
 
         // Prepare a query on all nodes
         // Note that this *assumes* the query is valid.
-        public void prepare(MD5Digest digest, String keyspace, String query, InetAddress toExclude) throws InterruptedException {
-            preparedQueries.put(digest, new PreparedQuery(keyspace, query));
+        public void prepare(MD5Digest digest, PreparedStatement stmt, InetAddress toExclude) throws InterruptedException {
+            preparedQueries.put(digest, stmt);
             for (Session s : sessions)
-                s.manager.prepare(query, toExclude);
+                s.manager.prepare(stmt.getQueryString(), toExclude);
         }
 
         private void prepareAllQueries(Host host) throws InterruptedException {
             if (preparedQueries.isEmpty())
                 return;
 
+            logger.debug("Preparing {} prepared queries on newly up node {}", preparedQueries.size(), host);
             try {
                 Connection connection = connectionFactory.open(host);
 
-                try {
-                    ControlConnection.waitForSchemaAgreement(connection, metadata);
-                } catch (ExecutionException e) {
-                    // As below, just move on
-                }
-
-                SetMultimap<String, String> perKeyspace = HashMultimap.create();
-                for (PreparedQuery pq : preparedQueries.values()) {
-                    perKeyspace.put(pq.keyspace, pq.query);
-                }
-
-                for (String keyspace : perKeyspace.keySet())
+                try
                 {
-                    List<Connection.Future> futures = new ArrayList<Connection.Future>(preparedQueries.size());
-                    for (String query : perKeyspace.get(keyspace)) {
-                        futures.add(connection.write(new PrepareMessage(query)));
+                    try {
+                        ControlConnection.waitForSchemaAgreement(connection, metadata);
+                    } catch (ExecutionException e) {
+                        // As below, just move on
                     }
-                    for (Connection.Future future : futures) {
-                        try {
-                            future.get();
-                        } catch (ExecutionException e) {
-                            // This "might" happen if we drop a CF but haven't removed it's prepared queries (which we don't do
-                            // currently). It's not a big deal however as if it's a more serious problem it'll show up later when
-                            // the query is tried for execution.
-                            logger.debug("Unexpected error while preparing queries on new/newly up host", e);
+
+                    // Furthermore, along with each prepared query we keep the current keyspace at the time of preparation
+                    // as we need to make it is the same when we re-prepare on new/restarted nodes. Most query will use the
+                    // same keyspace so keeping it each time is slightly wasteful, but this doesn't really matter and is
+                    // simpler. Besides, we do avoid in prepareAllQueries to not set the current keyspace more than needed.
+
+                    // We need to make sure we prepared every query with the right current keyspace, i.e. the one originally
+                    // used for preparing it. However, since we are likely that all prepared query belong to only a handful
+                    // of different keyspace (possibly only one), and to avoid setting the current keyspace more than needed,
+                    // we first sort the query per keyspace.
+                    SetMultimap<String, String> perKeyspace = HashMultimap.create();
+                    for (PreparedStatement ps : preparedQueries.values()) {
+                        // It's possible for a query to not have a current keyspace. But since null doesn't work well as
+                        // map keys, we use the empty string instead (that is not a valid keyspace name).
+                        String keyspace = ps.getQueryKeyspace() == null ? "" : ps.getQueryKeyspace();
+                        perKeyspace.put(keyspace, ps.getQueryString());
+                    }
+
+                    for (String keyspace : perKeyspace.keySet())
+                    {
+                        // Empty string mean no particular keyspace to set
+                        if (!keyspace.isEmpty())
+                            connection.setKeyspace(keyspace);
+
+                        List<Connection.Future> futures = new ArrayList<Connection.Future>(preparedQueries.size());
+                        for (String query : perKeyspace.get(keyspace)) {
+                            futures.add(connection.write(new PrepareMessage(query)));
+                        }
+                        for (Connection.Future future : futures) {
+                            try {
+                                future.get();
+                            } catch (ExecutionException e) {
+                                // This "might" happen if we drop a CF but haven't removed it's prepared queries (which we don't do
+                                // currently). It's not a big deal however as if it's a more serious problem it'll show up later when
+                                // the query is tried for execution.
+                                logger.debug("Unexpected error while preparing queries on new/newly up host", e);
+                            }
                         }
                     }
+                } finally {
+                    connection.close();
                 }
             } catch (ConnectionException e) {
                 // Ignore, not a big deal
@@ -830,17 +848,5 @@ public class Cluster {
             }, 1, TimeUnit.SECONDS);
         }
 
-    }
-
-    static class PreparedQuery
-    {
-        final String keyspace;
-        final String query;
-
-        PreparedQuery(String currentKeyspace, String query)
-        {
-            this.keyspace = currentKeyspace;
-            this.query = query;
-        }
     }
 }

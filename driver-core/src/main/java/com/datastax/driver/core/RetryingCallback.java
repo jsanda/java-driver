@@ -253,7 +253,7 @@ class RetryingCallback implements Connection.ResponseCallback {
                         case UNPREPARED:
                             assert err.error instanceof PreparedQueryNotFoundException;
                             PreparedQueryNotFoundException pqnf = (PreparedQueryNotFoundException)err.error;
-                            Cluster.PreparedQuery toPrepare = manager.cluster.manager.preparedQueries.get(pqnf.id);
+                            PreparedStatement toPrepare = manager.cluster.manager.preparedQueries.get(pqnf.id);
                             if (toPrepare == null) {
                                 // This shouldn't happen
                                 String msg = String.format("Tried to execute unknown prepared query %s", pqnf.id);
@@ -262,34 +262,30 @@ class RetryingCallback implements Connection.ResponseCallback {
                                 return;
                             }
 
-                            try {
-                                String currentKeyspace = connection.keyspace();
-                                // This shouldn't happen in normal use, because a user shouldn't try to execute
-                                // a prepared statement with the wrong keyspace set. However, if it does, we'd rather
-                                // prepare the query correctly and let the query executing return a meaningful error message
-                                if (!currentKeyspace.equals(toPrepare.keyspace))
-                                    connection.setKeyspace(toPrepare.keyspace);
-                                try
-                                {
-                                    Message.Response prepareResponse = Uninterruptibles.getUninterruptibly(connection.write(new PrepareMessage(toPrepare.query)));
-                                } finally {
-                                    // Always reset the previous keyspace if needed
-                                    if (!connection.keyspace().equals(currentKeyspace))
-                                        connection.setKeyspace(currentKeyspace);
-                                }
-                                // TODO check return ?
-                                retry = RetryPolicy.RetryDecision.retry(null);
-                            } catch (ExecutionException e) {
-                                logError(connection.address, "Unexpected problem while preparing query to execute: " + e.getCause().getMessage());
-                                retry(false, null);
-                                return;
-                            } catch (ConnectionException e) {
-                                logger.debug("Connection exception while preparing missing statement", e);
-                                logError(e.address, e.getMessage());
-                                retry(false, null);
-                                return;
+                            logger.trace("Preparing required prepared query {}", toPrepare.getQueryString());
+                            String currentKeyspace = connection.keyspace();
+                            String prepareKeyspace = toPrepare.getQueryKeyspace();
+                            // This shouldn't happen in normal use, because a user shouldn't try to execute
+                            // a prepared statement with the wrong keyspace set. However, if it does, we'd rather
+                            // prepare the query correctly and let the query executing return a meaningful error message
+                            if (prepareKeyspace != null && (currentKeyspace == null || !currentKeyspace.equals(prepareKeyspace)))
+                            {
+                                logger.trace("Setting keyspace for prepared query to {}", prepareKeyspace);
+                                connection.setKeyspace(prepareKeyspace);
                             }
-                            break;
+
+                            try {
+                                connection.write(prepareAndRetry(toPrepare.getQueryString()));
+                            } finally {
+                                // Always reset the previous keyspace if needed
+                                if (connection.keyspace() == null || !connection.keyspace().equals(currentKeyspace))
+                                {
+                                    logger.trace("Setting back keyspace post query preparation to {}", currentKeyspace);
+                                    connection.setKeyspace(currentKeyspace);
+                                }
+                            }
+                            // we're done for now, the prepareAndRetry callback will handle the rest
+                            return;
                         default:
                             if (manager.configuration().isMetricsEnabled())
                                 metrics().getErrorMetrics().getOthers().inc();
@@ -302,6 +298,8 @@ class RetryingCallback implements Connection.ResponseCallback {
                         switch (retry.getType()) {
                             case RETRY:
                                 ++queryRetries;
+                                if (logger.isTraceEnabled())
+                                    logger.trace("Doing retry {} for query {} at consistency {}", new Object[]{ queryRetries, query, retry.getRetryConsistencyLevel()});
                                 if (manager.configuration().isMetricsEnabled())
                                     metrics().getErrorMetrics().getRetries().inc();
                                 retry(true, retry.getRetryConsistencyLevel());
@@ -326,6 +324,25 @@ class RetryingCallback implements Connection.ResponseCallback {
         }
     }
 
+    private Connection.ResponseCallback prepareAndRetry(final String toPrepare) {
+        return new Connection.ResponseCallback() {
+
+            public Message.Request request() {
+                return new PrepareMessage(toPrepare);
+            }
+
+            public void onSet(Connection connection, Message.Response response) {
+                // TODO should we check the response ?
+                logger.trace("Scheduling retry now that query is prepared");
+                retry(true, null);
+            }
+
+            public void onException(Connection connection, Exception exception) {
+                RetryingCallback.this.onException(connection, exception);
+            }
+        };
+    }
+
     public void onException(Connection connection, Exception exception) {
 
         if (connection != null) {
@@ -348,5 +365,4 @@ class RetryingCallback implements Connection.ResponseCallback {
 
         setFinalException(connection, exception);
     }
-
 }

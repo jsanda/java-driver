@@ -34,6 +34,7 @@ public class PreparedStatementTest extends CCMBridge.PerClassSingleNodeCluster {
     private static final String ALL_LIST_TABLE = "all_list";
     private static final String ALL_SET_TABLE = "all_set";
     private static final String ALL_MAP_TABLE = "all_map";
+    private static final String SIMPLE_TABLE = "test";
 
     private boolean exclude(DataType t) {
         return t.getName() == DataType.Name.COUNTER;
@@ -90,6 +91,8 @@ public class PreparedStatementTest extends CCMBridge.PerClassSingleNodeCluster {
         }
         sb.append(")");
         defs.add(sb.toString());
+
+        defs.add(String.format("CREATE TABLE %s (k text PRIMARY KEY, i int)", SIMPLE_TABLE));
 
         return defs;
     }
@@ -176,5 +179,51 @@ public class PreparedStatementTest extends CCMBridge.PerClassSingleNodeCluster {
                 assertEquals("For type " + type, value, getValue(row, name, type));
             }
         }
+    }
+
+    private void reprepareOnNewlyUpNodeTest(String ks, Session session) throws Exception {
+
+        ks = ks == null ? "" : ks + ".";
+
+        session.execute("INSERT INTO " + ks + "test (k, i) VALUES ('123', 17)");
+        session.execute("INSERT INTO " + ks + "test (k, i) VALUES ('124', 18)");
+
+        PreparedStatement ps = session.prepare("SELECT * FROM " + ks + "test WHERE k = ?");
+
+        assertEquals(17, session.execute(ps.bind("123")).one().getInt("i"));
+
+        cassandraCluster.stop();
+        // We have one node, so if we shut it down and do nothing, the driver
+        // won't notice the node is dead (until keep alive kicks in at least,
+        // but that's a fairly long time). So we cheat and just do any request
+        // to force the detection.
+        cluster.manager.submitSchemaRefresh(null, null);
+        waitForDown(CCMBridge.IP_PREFIX + "1", cluster, 20);
+
+        cassandraCluster.start();
+        waitFor(CCMBridge.IP_PREFIX + "1", cluster, 20);
+
+        try
+        {
+            assertEquals(18, session.execute(ps.bind("124")).one().getInt("i"));
+        }
+        catch (NoHostAvailableException e)
+        {
+            System.out.println(">> " + e.getErrors());
+            throw e;
+        }
+    }
+
+    @Test
+    public void reprepareOnNewlyUpNodeTest() throws Exception {
+        reprepareOnNewlyUpNodeTest(null, session);
+    }
+
+    @Test
+    public void reprepareOnNewlyUpNodeNoKeyspaceTest() throws Exception {
+
+        // This is the same test than reprepareOnNewlyUpNodeTest, except that the
+        // prepared statement is prepared while no current keyspace is used
+        reprepareOnNewlyUpNodeTest(TestUtils.SIMPLE_KEYSPACE, cluster.connect());
     }
 }
