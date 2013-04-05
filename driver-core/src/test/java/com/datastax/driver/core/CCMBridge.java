@@ -19,10 +19,6 @@ import java.io.*;
 import java.net.InetAddress;
 import java.util.*;
 
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
-
 import com.datastax.driver.core.exceptions.*;
 import static com.datastax.driver.core.TestUtils.*;
 
@@ -30,6 +26,8 @@ import com.google.common.io.Files;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.testng.annotations.AfterClass;
+import org.testng.annotations.BeforeClass;
 
 public class CCMBridge {
 
@@ -100,6 +98,10 @@ public class CCMBridge {
         execute("ccm stop");
     }
 
+    public void forceStop() {
+        execute("ccm stop --not-gently");
+    }
+
     public void start(int n) {
         execute("ccm node%d start", n);
     }
@@ -108,14 +110,29 @@ public class CCMBridge {
         execute("ccm node%d stop", n);
     }
 
+    public void forceStop(int n) {
+        execute("ccm node%d stop --not-gently", n);
+    }
+
     public void remove() {
         stop();
         execute("ccm remove");
     }
 
     public void bootstrapNode(int n) {
-        execute("ccm add node%d -i %s%d -j %d -b", n, IP_PREFIX, n, 7000 + 100*n);
+        bootstrapNode(n, null);
+    }
+
+    public void bootstrapNode(int n, String dc) {
+        if (dc == null)
+            execute("ccm add node%d -i %s%d -j %d -b", n, IP_PREFIX, n, 7000 + 100*n);
+        else
+            execute("ccm add node%d -i %s%d -j %d -b -d %s", n, IP_PREFIX, n, 7000 + 100*n, dc);
         execute("ccm node%d start", n);
+    }
+
+    public void decommissionNode(int n) {
+        execute("ccm node%d decommission", n);
     }
 
     private void execute(String command, Object... args) {
@@ -164,7 +181,6 @@ public class CCMBridge {
             erroredOut = true;
         }
 
-        @BeforeClass
         public static void createCluster() {
             erroredOut = false;
             schemaCreated = false;
@@ -180,7 +196,7 @@ public class CCMBridge {
             }
         }
 
-        @AfterClass
+        @AfterClass(groups = {"integration"})
         public static void discardCluster() {
             if (cluster != null)
                 cluster.shutdown();
@@ -196,7 +212,12 @@ public class CCMBridge {
             }
         }
 
-        @Before
+        @BeforeClass(groups = {"integration"})
+        public void beforeClass() {
+        	createCluster();
+        	maybeCreateSchema();
+        }
+        
         public void maybeCreateSchema() {
 
             try {

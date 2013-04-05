@@ -16,8 +16,10 @@
 package com.datastax.driver.core;
 
 import java.net.InetAddress;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
@@ -46,21 +48,21 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Connection callback that handle retrying another node if the connection fails.
- *
- * For queries, this also handle retrying the query if the RetryPolicy say so.
+ * Handles a request to cassandra, dealing with host failover and retries on
+ * unavailable/timeout.
  */
-class RetryingCallback implements Connection.ResponseCallback {
+class RequestHandler implements Connection.ResponseCallback {
 
-    private static final Logger logger = LoggerFactory.getLogger(RetryingCallback.class);
+    private static final Logger logger = LoggerFactory.getLogger(RequestHandler.class);
 
     private final Session.Manager manager;
-    private final Connection.ResponseCallback callback;
+    private final Callback callback;
     private final TimerContext timerContext;
 
     private final Iterator<Host> queryPlan;
     private final Query query;
     private volatile Host current;
+    private volatile List<Host> triedHosts;
     private volatile HostConnectionPool currentPool;
 
     private volatile int queryRetries;
@@ -68,7 +70,7 @@ class RetryingCallback implements Connection.ResponseCallback {
 
     private volatile Map<InetAddress, String> errors;
 
-    public RetryingCallback(Session.Manager manager, Connection.ResponseCallback callback, Query query) {
+    public RequestHandler(Session.Manager manager, Callback callback, Query query) {
         this.manager = manager;
         this.callback = callback;
 
@@ -104,6 +106,11 @@ class RetryingCallback implements Connection.ResponseCallback {
             // Note: this is not perfectly correct to use getConnectTimeoutMillis(), but
             // until we provide a more fancy to control query timeouts, it's not a bad solution either
             connection = currentPool.borrowConnection(manager.configuration().getSocketOptions().getConnectTimeoutMillis(), TimeUnit.MILLISECONDS);
+            if (current != null) {
+                if (triedHosts == null)
+                    triedHosts = new ArrayList<Host>();
+                triedHosts.add(current);
+            }
             current = host;
             connection.write(this);
             return true;
@@ -179,7 +186,16 @@ class RetryingCallback implements Connection.ResponseCallback {
     private void setFinalResult(Connection connection, Message.Response response) {
         if (timerContext != null)
             timerContext.stop();
-        callback.onSet(connection, response);
+
+        ExecutionInfo info = current.defaultExecutionInfo;
+        if (triedHosts != null)
+        {
+            triedHosts.add(current);
+            info = new ExecutionInfo(triedHosts);
+        }
+        if (retryConsistencyLevel != null)
+            info = info.withAchievedConsistency(retryConsistencyLevel);
+        callback.onSet(connection, response, info);
     }
 
     private void setFinalException(Connection connection, Exception exception) {
@@ -239,6 +255,7 @@ class RetryingCallback implements Connection.ResponseCallback {
                         case OVERLOADED:
                             // Try another node
                             logger.warn("Host {} is overloaded, trying next host.", connection.address);
+                            logError(connection.address, "Host overloaded");
                             if (manager.configuration().isMetricsEnabled())
                                 metrics().getErrorMetrics().getOthers().inc();
                             retry(false, null);
@@ -246,6 +263,7 @@ class RetryingCallback implements Connection.ResponseCallback {
                         case IS_BOOTSTRAPPING:
                             // Try another node
                             logger.error("Query sent to {} but it is bootstrapping. This shouldn't happen but trying next host.", connection.address);
+                            logError(connection.address, "Host is boostrapping");
                             if (manager.configuration().isMetricsEnabled())
                                 metrics().getErrorMetrics().getOthers().inc();
                             retry(false, null);
@@ -262,7 +280,7 @@ class RetryingCallback implements Connection.ResponseCallback {
                                 return;
                             }
 
-                            logger.trace("Preparing required prepared query {}", toPrepare.getQueryString());
+                            logger.trace("Preparing required prepared query {} in keyspace {}", toPrepare.getQueryString(), toPrepare.getQueryKeyspace());
                             String currentKeyspace = connection.keyspace();
                             String prepareKeyspace = toPrepare.getQueryKeyspace();
                             // This shouldn't happen in normal use, because a user shouldn't try to execute
@@ -333,12 +351,31 @@ class RetryingCallback implements Connection.ResponseCallback {
 
             public void onSet(Connection connection, Message.Response response) {
                 // TODO should we check the response ?
-                logger.trace("Scheduling retry now that query is prepared");
-                retry(true, null);
+                switch (response.type) {
+                    case RESULT:
+                        if (((ResultMessage)response).kind == ResultMessage.Kind.PREPARED) {
+                            logger.trace("Scheduling retry now that query is prepared");
+                            retry(true, null);
+                        } else {
+                            logError(connection.address, "Got unexpected response to prepare message: " + response);
+                            retry(false, null);
+                        }
+                        break;
+                    case ERROR:
+                        logError(connection.address, "Error preparing query, got " + response);
+                        if (manager.configuration().isMetricsEnabled())
+                            metrics().getErrorMetrics().getOthers().inc();
+                        retry(false, null);
+                        break;
+                    default:
+                        // Something's wrong, so we return but we let setFinalResult propagate the exception
+                        RequestHandler.this.setFinalResult(connection, response);
+                        break;
+                }
             }
 
             public void onException(Connection connection, Exception exception) {
-                RetryingCallback.this.onException(connection, exception);
+                RequestHandler.this.onException(connection, exception);
             }
         };
     }
@@ -364,5 +401,9 @@ class RetryingCallback implements Connection.ResponseCallback {
         }
 
         setFinalException(connection, exception);
+    }
+
+    interface Callback extends Connection.ResponseCallback {
+        public void onSet(Connection connection, Message.Response response, ExecutionInfo info);
     }
 }

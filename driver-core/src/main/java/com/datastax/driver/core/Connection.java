@@ -147,7 +147,7 @@ class Connection extends org.apache.cassandra.transport.Connection
                     throw defunct(new TransportException(address, String.format("Error initializing connection: %s", ((ErrorMessage)response).error.getMessage())));
                 case AUTHENTICATE:
                     CredentialsMessage creds = new CredentialsMessage();
-                    creds.credentials.putAll(factory.authProvider.getAuthInfos(address));
+                    creds.credentials.putAll(factory.authProvider.getAuthInfo(address));
                     Message.Response authResponse = write(creds).get();
                     switch (authResponse.type) {
                         case READY:
@@ -482,7 +482,7 @@ class Connection extends org.apache.cassandra.transport.Connection
         }
     }
 
-    static class Future extends SimpleFuture<Message.Response> implements ResponseCallback {
+    static class Future extends SimpleFuture<Message.Response> implements RequestHandler.Callback {
 
         private final Message.Request request;
         private volatile InetAddress address;
@@ -493,6 +493,10 @@ class Connection extends org.apache.cassandra.transport.Connection
 
         public Message.Request request() {
             return request;
+        }
+
+        public void onSet(Connection connection, Message.Response response, ExecutionInfo info) {
+            onSet(connection, response);
         }
 
         public void onSet(Connection connection, Message.Response response) {

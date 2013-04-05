@@ -21,10 +21,12 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ScheduledFuture;
 
+import com.google.common.collect.ImmutableList;
+
 /**
  * A Cassandra node.
  *
- * This class keeps the informations the driver maintain on a given Cassandra node.
+ * This class keeps the information the driver maintain on a given Cassandra node.
  */
 public class Host {
 
@@ -37,6 +39,8 @@ public class Host {
     // Tracks reconnection attempts to that host so we avoid adding multiple tasks
     final AtomicReference<ScheduledFuture> reconnectionAttempt = new AtomicReference<ScheduledFuture>();
 
+    final ExecutionInfo defaultExecutionInfo;
+
     // ClusterMetadata keeps one Host object per inet address, so don't use
     // that constructor unless you know what you do (use ClusterMetadata.getHost typically).
     Host(InetAddress address, ConvictionPolicy.Factory policy) {
@@ -45,6 +49,7 @@ public class Host {
 
         this.address = address;
         this.monitor = new HealthMonitor(policy.create(this));
+        this.defaultExecutionInfo = new ExecutionInfo(ImmutableList.of(this));
     }
 
     void setLocationInfo(String datacenter, String rack) {
@@ -155,7 +160,7 @@ public class Host {
          * @param listener the {@link Host.StateListener} to unregister.
          */
         public void unregister(StateListener listener) {
-            listeners.add(listener);
+            listeners.remove(listener);
         }
 
         /**
