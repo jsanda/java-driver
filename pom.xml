@@ -113,6 +113,9 @@
       <id>datastax-repo</id>
       <name>DataStax temp repo</name>
       <url>${datastax.repo}</url>
+      <snapshots>
+        <enabled>true</enabled>
+      </snapshots>
     </repository>
   </repositories>
 
