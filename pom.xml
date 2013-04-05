@@ -110,7 +110,8 @@
 
   <repositories>
     <repository>
-      <id>datastax-repo</id>
+      <!--<id>datastax-repo</id>-->
+      <id>sonatype-nexus-snapshots</id>
       <name>DataStax temp repo</name>
       <url>${datastax.repo}</url>
       <snapshots>
