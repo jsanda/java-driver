@@ -16,7 +16,7 @@
   <parent>
     <groupId>com.datastax.cassandra</groupId>
     <artifactId>cassandra-driver-examples-parent</artifactId>
-    <version>1.0.0-beta2-rhq-1_2_2-SNAPSHOT</version>
+    <version>1.0.0-beta2-rhq-1.2.2-1</version>
   </parent>
   <artifactId>cassandra-driver-examples-stress</artifactId>
   <packaging>jar</packaging>
