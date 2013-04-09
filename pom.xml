@@ -113,11 +113,11 @@
 
   <repositories>
     <repository>
-      <id>datastax-repo</id>
-      <name>DataStax temp repo</name>
-      <url>${datastax.repo}</url>
+      <id>jboss-thirdparty-uploads-repo</id>
+      <name>JBoss Public Thirdparty Uploads</name>
+      <url>https://repository.jboss.org/nexus/content/repositories/thirdparty-uploads/</url>
       <snapshots>
-        <enabled>true</enabled>
+        <enabled>false</enabled>
       </snapshots>
     </repository>
   </repositories>
