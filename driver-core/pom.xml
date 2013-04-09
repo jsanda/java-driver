@@ -86,17 +86,6 @@
        <artifactId>snappy-java</artifactId>
        <version>1.0.5-M3-p1</version>
      </dependency>
-    <!--
-      The driver uses snappy-java for compression. The upstream uses the same version as
-      the server. Using a newer version to work around
-      https://github.com/xerial/snappy-java/issues/5 which is a classloading issue that
-      causes the RHQ installer to fail.
-    -->
-    <dependency>
-      <groupId>org.xerial.snappy</groupId>
-      <artifactId>snappy-java</artifactId>
-      <version>1.1.0-M3</version>
-    </dependency>
 
     <dependency>
       <groupId>org.testng</groupId>
