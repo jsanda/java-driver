@@ -100,17 +100,6 @@
     </plugins>
   </build>
 
-  <distributionManagement>
-    <repository>
-      <id>datastax-repo</id>
-      <name>DataStax temp repo</name>
-      <url>${datastax.repo}</url>
-      <snapshots>
-        <enabled>true</enabled>
-      </snapshots>
-    </repository>
-  </distributionManagement>
-
   <repositories>
     <repository>
       <id>jboss-thirdparty-uploads-repo</id>
