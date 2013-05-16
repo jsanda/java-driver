@@ -18,7 +18,7 @@
   <parent>
     <groupId>com.datastax.cassandra</groupId>
     <artifactId>cassandra-driver-parent</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.0-rhq-1.2.4</version>
   </parent>
   <artifactId>cassandra-driver-core</artifactId>
   <packaging>jar</packaging>
@@ -69,6 +69,21 @@
       <groupId>com.yammer.metrics</groupId>
       <artifactId>metrics-core</artifactId>
       <version>2.2.0</version>
+    </dependency> 
+
+    <!--
+      The driver uses snappy-java for compression. The upstream uses the same version as
+      the server. We have to used a patched version due to a classloading issue that occurs
+      in JBoss AS 7. snappy-java uses the root classloader to load its native library. This
+      however does not work with JBoss modules and results in a linkage error when trying
+      to load the snappy native library. As a work around this forked version of snappy-java
+      uses the same classloader that loads the Snappy class. The forked version lives at
+      https://github.com/jsanda/snappy-java.
+    -->
+    <dependency>
+      <groupId>org.xerial.snappy</groupId>
+      <artifactId>snappy-java</artifactId>
+      <version>1.0.5-M3-p1</version>
     </dependency>
 
     <dependency>
